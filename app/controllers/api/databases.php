@@ -38,6 +38,7 @@ use Utopia\Validator\URL;
 use Appwrite\Utopia\Database\Validator\CustomId;
 use Appwrite\Utopia\Database\Validator\Query\Limit;
 use Appwrite\Utopia\Database\Validator\Query\Offset;
+use Appwrite\Utopia\Request;
 use Appwrite\Utopia\Response;
 use Appwrite\Detector\Detector;
 use Appwrite\Event\Database as EventDatabase;
@@ -2245,11 +2246,12 @@ App::patch('/v1/databases/:databaseId/collections/:collectionId/documents/:docum
     ->param('documentId', '', new UID(), 'Document ID.')
     ->param('data', [], new JSON(), 'Document data as JSON object. Include only attribute and value pairs to be updated.', true)
     ->param('permissions', null, new Permissions(APP_LIMIT_ARRAY_PARAMS_SIZE, [Database::PERMISSION_READ, Database::PERMISSION_UPDATE, Database::PERMISSION_DELETE, Database::PERMISSION_WRITE]), 'An array of permissions strings. By default, the current permissions are inherited. [Learn more about permissions](/docs/permissions).', true)
+    ->inject('request')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('events')
     ->inject('mode')
-    ->action(function (string $databaseId, string $collectionId, string $documentId, string|array $data, ?array $permissions, Response $response, Database $dbForProject, Event $events, string $mode) {
+    ->action(function (string $databaseId, string $collectionId, string $documentId, string|array $data, ?array $permissions, Request $request, Response $response, Database $dbForProject, Event $events, string $mode) {
 
         $data = (\is_string($data)) ? \json_decode($data, true) : $data; // Cast to JSON array
 
@@ -2279,6 +2281,7 @@ App::patch('/v1/databases/:databaseId/collections/:collectionId/documents/:docum
         }
 
         // Read permission should not be required for update
+        /** @var Document */
         $document = Authorization::skip(fn() => $dbForProject->getDocument('database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId(), $documentId));
 
         if ($document->isEmpty()) {
@@ -2323,11 +2326,38 @@ App::patch('/v1/databases/:databaseId/collections/:collectionId/documents/:docum
         $data['$id'] = $document->getId();                      // Make sure user doesn't switch document unique ID
         $data['$permissions'] = $permissions;
 
+        $timestamp = null;
+        $timestampHeader = $request->getHeader('x-appwrite-timestamp');
+        if (!empty($timestampHeader)) {
+            $timestamp = new \DateTime($timestampHeader);
+        }
+
         try {
+            $internalCollectionId = 'database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId();
             if ($documentSecurity && !$valid) {
-                $document = $dbForProject->updateDocument('database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId(), $document->getId(), new Document($data));
+                $document = $dbForProject->withRequestTimestamp(
+                    $timestamp,
+                    function () use ($dbForProject, $internalCollectionId, $document, $data) {
+                        return $dbForProject->updateDocument(
+                            $internalCollectionId,
+                            $document->getId(),
+                            new Document($data)
+                        );
+                    }
+                );
             } else {
-                $document = Authorization::skip(fn() => $dbForProject->updateDocument('database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId(), $document->getId(), new Document($data)));
+                $document = Authorization::skip(function () use ($dbForProject, $timestamp, $internalCollectionId, $document, $data) {
+                    return $dbForProject->withRequestTimestamp(
+                        $timestamp,
+                        function () use ($dbForProject, $internalCollectionId, $document, $data) {
+                            return $dbForProject->updateDocument(
+                                $internalCollectionId,
+                                $document->getId(),
+                                new Document($data)
+                            );
+                        }
+                    );
+                });
             }
 
             /**
@@ -2376,12 +2406,13 @@ App::delete('/v1/databases/:databaseId/collections/:collectionId/documents/:docu
     ->param('databaseId', '', new UID(), 'Database ID.')
     ->param('collectionId', '', new UID(), 'Collection ID. You can create a new collection using the Database service [server integration](https://appwrite.io/docs/server/databases#databasesCreateCollection).')
     ->param('documentId', '', new UID(), 'Document ID.')
+    ->inject('request')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('events')
     ->inject('deletes')
     ->inject('mode')
-    ->action(function (string $databaseId, string $collectionId, string $documentId, Response $response, Database $dbForProject, Event $events, Delete $deletes, string $mode) {
+    ->action(function (string $databaseId, string $collectionId, string $documentId, Request $request, Response $response, Database $dbForProject, Event $events, Delete $deletes, string $mode) {
 
         $database = Authorization::skip(fn () => $dbForProject->getDocument('databases', $databaseId));
 
@@ -2411,17 +2442,31 @@ App::delete('/v1/databases/:databaseId/collections/:collectionId/documents/:docu
             throw new Exception(Exception::DOCUMENT_NOT_FOUND);
         }
 
+        $timestamp = null;
+        $timestampHeader = $request->getHeader('x-appwrite-timestamp');
+        if (!empty($timestampHeader)) {
+            $timestamp = new \DateTime($timestampHeader);
+        }
+
+        $internalCollectionId = 'database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId();
+
         if ($documentSecurity && !$valid) {
             try {
-                $dbForProject->deleteDocument('database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId(), $documentId);
+                $dbForProject->withRequestTimestamp($timestamp, function () use ($dbForProject, $internalCollectionId, $documentId) {
+                    return $dbForProject->deleteDocument($internalCollectionId, $documentId);
+                });
             } catch (AuthorizationException) {
                 throw new Exception(Exception::USER_UNAUTHORIZED);
             }
         } else {
-            Authorization::skip(fn() => $dbForProject->deleteDocument('database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId(), $documentId));
+            Authorization::skip(function () use ($dbForProject, $timestamp, $internalCollectionId, $documentId) {
+                return $dbForProject->withRequestTimestamp($timestamp, function () use ($dbForProject, $internalCollectionId, $documentId) {
+                    return $dbForProject->deleteDocument($internalCollectionId, $documentId);
+                });
+            });
         }
 
-        $dbForProject->deleteCachedDocument('database_' . $database->getInternalId() . '_collection_' . $collection->getInternalId(), $documentId);
+        $dbForProject->deleteCachedDocument($internalCollectionId, $documentId);
 
         /**
          * Reset $collection attribute to remove prefix.

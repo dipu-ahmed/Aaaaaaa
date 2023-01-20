@@ -111,6 +111,16 @@ App::init()
             throw new Exception(Exception::PROJECT_UNKNOWN);
         }
 
+        // Validate x-appwrite-timestamp header
+        $timestampHeader = $request->getHeader('x-appwrite-timestamp');
+        if (!empty($timestampHeader)) {
+            try {
+                new \DateTime($timestampHeader);
+            } catch (\Throwable $e) {
+                throw new Exception(Exception::GENERAL_ARGUMENT_INVALID, 'Invalid X-Appwrite-Timestamp header value');
+            }
+        }
+
         /*
         * Abuse Check
         */

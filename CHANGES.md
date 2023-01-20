@@ -1,4 +1,8 @@
-# Version TBD
+# Version 1.3.0
+
+## Features
+- Update Update Document API to check X-Appwrite-Timestamp header [#5024](https://github.com/appwrite/appwrite/pull/5024)
+## Changes
 - Fix not storing function's response on response codes 5xx [#4610](https://github.com/appwrite/appwrite/pull/4610)
 
 # Version 1.2.1

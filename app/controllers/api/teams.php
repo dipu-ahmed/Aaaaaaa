@@ -212,10 +212,11 @@ App::put('/v1/teams/:teamId')
     ->label('sdk.response.model', Response::MODEL_TEAM)
     ->param('teamId', '', new UID(), 'Team ID.')
     ->param('name', null, new Text(128), 'New team name. Max length: 128 chars.')
+    ->inject('request')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('events')
-    ->action(function (string $teamId, string $name, Response $response, Database $dbForProject, Event $events) {
+    ->action(function (string $teamId, string $name, Request $request, Response $response, Database $dbForProject, Event $events) {
 
         $team = $dbForProject->getDocument('teams', $teamId);
 
@@ -223,9 +224,19 @@ App::put('/v1/teams/:teamId')
             throw new Exception(Exception::TEAM_NOT_FOUND);
         }
 
-        $team = $dbForProject->updateDocument('teams', $team->getId(), $team
+        $timestamp = null;
+        $timestampHeader = $request->getHeader('x-appwrite-timestamp');
+        if (!empty($timestampHeader)) {
+            $timestamp = new \DateTime($timestampHeader);
+        }
+
+        $team
             ->setAttribute('name', $name)
-            ->setAttribute('search', implode(' ', [$teamId, $name])));
+            ->setAttribute('search', implode(' ', [$teamId, $name]));
+
+        $team = $dbForProject->withRequestTimestamp($timestamp, function () use ($dbForProject, $team) {
+            return $dbForProject->updateDocument('teams', $team->getId(), $team);
+        });
 
         $events->setParam('teamId', $team->getId());
 
